@@ -1,22 +1,212 @@
 # ДЗ №1 — Фундамент DevOps-инфраструктуры
 
 Примак Семён Алексеевич, группа Б13-404.
+VM: `111.88.162.128`, исходный SSH-пользователь: `student`.
 
-Настройка Ubuntu через Ansible, отдельный nginx через Terraform,
-окружение Docker Compose и мониторинг через Bash.
+## Архитектура
 
-## Структура проекта
+Согласно уточнению Фёдора от 12 октября 2026 года, этап 2 PDF заменён
+работой с провайдером `kreuzwerker/docker`. VM уже выдана; создавать
+облачные VM, VPC, Security Group и IAM-ресурсы не требуется.
+Сначала выполняется этап 3 (Ansible), затем Terraform.
 
-- `ansible/` — настройка выданной Ubuntu VM.
-- `terraform/` — nginx, отдельная Docker-сеть и том.
-- `scripts/` — мониторинг сервисов.
-- `compose/` — reverse proxy и приложение Hello World.
-- `docs/screenshots/` — скриншоты результатов для сдачи.
+| Часть | Ресурсы | Доступ |
+| --- | --- | --- |
+| Ansible | Docker Engine, Compose plugin, rsyslog, deployer, sudo | SSH как student, повышение прав через sudo |
+| Terraform | nginx, сеть primak-terraform-net, том primak-terraform-nginx-html | HTTP :8081 |
+| Compose | nginx reverse proxy → app nginx, сеть primak-compose-net | HTTP :80, Hello World |
+| Bash | systemctl, journalctl, grep, awk | monitor.sh docker |
 
-## Порядок выполнения
+Terraform-nginx отдаёт стандартную статическую страницу nginx. Docker
+заполняет новый именованный том HTML-файлами образа; контейнер монтирует
+его только для чтения. Compose-приложение не публикует порт наружу:
+запросы к нему идут через reverse proxy по имени `app` внутри своей сети.
 
-Согласно уточнению преподавателя от 12 октября 2026 года, этап 2
-исходного задания заменён работой с провайдером `kreuzwerker/docker`.
-Сначала Ansible настраивает предоставленную VM, затем Terraform
-создаёт отдельный nginx с томом в явно заданной сети и публикует его
-на нестандартном HTTP-порту. Окружение Compose работает в своей сети.
+`deployer` получает sudo без пароля по требованию задания. Членство в
+группе Docker также даёт широкие права на хосте. SSH-вход остаётся через
+`student`; роль не меняет его права и не настраивает вход root.
+Публичный Docker TCP API не включается. Пароли и приватные ключи не хранятся
+в Git. Terraform state сохраняется на VM и исключён из Git.
+
+## Структура
+
+- `ansible/` — inventory, роль настройки хоста, playbook деплоя Compose.
+- `terraform/` — провайдер, переменные, сеть, том, образ и контейнер nginx.
+- `compose/` — docker-compose.yml, reverse proxy, страница Hello World.
+- `scripts/monitor.sh` — мониторинг сервиса и ошибок syslog.
+- `tests/test_monitor.py` — проверки мониторинга с подставными сервисами.
+- `docs/screenshots/` — сюда добавить реальные скриншоты для сдачи.
+
+## 1. Подготовка управляющей машины
+
+Нужны Python 3.10+, venv, SSH и доступ к Интернету. Команды выполняются
+из корня проекта, если явно не указано другое.
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+ansible-galaxy collection install -r ansible/requirements.yml
+ssh student@111.88.162.128
+```
+
+При первом подключении проверить SSH fingerprint через преподавателя.
+Пароль запросить у преподавателя. Не повторять неудачные попытки входа:
+на VM работает fail2ban. Настроить SSH-ключ после успешного входа:
+
+```bash
+ssh-copy-id student@111.88.162.128
+```
+
+Если SSH-ключ ещё не создан, сначала выполнить `ssh-keygen -t ed25519`.
+Проверить на VM `sudo -v`: для Ansible нужны права sudo.
+
+## 2. Ansible: настройка и идемпотентность
+
+```bash
+cd ansible
+ansible-playbook setup_host.yml --syntax-check
+ansible-playbook setup_host.yml --ask-become-pass
+ansible-playbook setup_host.yml --ask-become-pass
+```
+
+Если sudo не требует пароля, флаг `--ask-become-pass` можно убрать.
+При подключении по SSH-паролю добавить `--ask-pass` и установить `sshpass`
+на управляющей машине. Предпочтителен настроенный SSH-ключ.
+
+Второй запуск должен завершиться без ошибок и показать `changed=0`.
+Роль использует модули Ansible для пакетов, файлов, пользователей и
+сервисов. Обновление кеша apt ограничено сроком 3600 секунд; пакеты
+устанавливаются с `state: present`, без принудительных обновлений.
+Не удаляем существующие Docker-пакеты автоматически: если на выданной VM
+есть конфликтующие пакеты, сначала нужно изучить их и текущие контейнеры.
+
+## 3. Terraform на VM
+
+На VM установить Terraform по официальной инструкции:
+https://developer.hashicorp.com/terraform/install
+Требуется версия `>=1.6, <2.0`. Terraform запускаем на VM, где находится
+Docker socket; локальные команды Terraform управляющей машины создали
+бы ресурсы на другой машине.
+
+С управляющей машины из корня проекта:
+
+```bash
+ssh student@111.88.162.128 'mkdir -p ~/devops-hw1'
+scp -r terraform student@111.88.162.128:~/devops-hw1/
+ssh student@111.88.162.128
+```
+
+На VM:
+
+```bash
+cd ~/devops-hw1/terraform
+sudo terraform init
+sudo terraform fmt -check
+sudo terraform validate
+sudo terraform plan -out=infra.tfplan
+sudo terraform apply infra.tfplan
+sudo terraform state list
+curl --fail --show-error -i http://127.0.0.1:8081
+```
+
+С управляющей машины проверить публичный доступ:
+
+```bash
+curl --fail --show-error -i http://111.88.162.128:8081
+```
+
+Ожидается `200 OK` и страница nginx. Порт можно изменить через
+`-var=http_port=8082` при создании плана. Файл `.terraform.lock.hcl`,
+созданный `init`, нужно вернуть в репозиторий и закоммитить; state,
+план и каталог `.terraform/` коммитить нельзя. State не удалять:
+Terraform использует его для сопоставления кода и реальных ресурсов.
+
+## 4. Мониторинг
+
+```bash
+sudo ./scripts/monitor.sh docker
+```
+
+Аргумент — имя systemd-сервиса. Для неактивного/неизвестного сервиса
+скрипт выводит последние 10 строк journalctl. В syslog выбираются строки
+со словами error, err, failed, failure, fatal, critical и временными
+метками за последний час. Считаются строки, не число слов.
+Поддерживаются традиционные syslog timestamps и ISO timestamps с часовым
+поясом. В традиционном формате используется локальное время хоста,
+учитывается переход года. Отсутствие ошибок и пустой лог дают 0.
+
+Коды возврата: `0` — сервис активен, проверка выполнена; `1` — сервис
+неактивен/неизвестен; `2` — неверные аргументы, недоступный журнал или
+ошибка инструмента. Для чтения журналов обычно нужен sudo. Если хост
+не использует systemd или не имеет syslog, реальная проверка сообщит
+об ограничении; это не успешный результат проверки.
+
+Локальные тесты без Docker, systemd и доступа к VM:
+
+```bash
+python3 -m unittest discover -s tests -v
+bash -n scripts/monitor.sh
+```
+
+`SYSLOG_PATH` позволяет задать файл журнала для проверки. На реальном
+локальном Linux-хосте дополнительно выполнить `sudo ./scripts/monitor.sh docker`.
+
+## 5. Compose на VM
+
+С управляющей машины:
+
+```bash
+cd ansible
+ansible-playbook deploy_compose.yml --ask-become-pass
+```
+
+Playbook копирует проект в `/opt/app`, устанавливает мониторинг и
+запускает Compose. На VM проверить:
+
+```bash
+cd /opt/app
+sudo docker compose ps
+curl --fail --show-error -i http://127.0.0.1
+sudo /usr/local/bin/monitor.sh docker
+sudo docker network inspect primak-compose-net primak-terraform-net
+sudo docker volume inspect primak-terraform-nginx-html
+```
+
+С управляющей машины:
+
+```bash
+curl --fail --show-error -i http://111.88.162.128
+```
+
+Ожидается `200 OK` и `Hello World`. Перед запуском убедиться, что порты
+80 и 8081 свободны (`sudo ss -ltnp`). Если внешний curl недоступен,
+проверить слушающие порты, журналы контейнеров и правила сети VM.
+
+## 6. Результаты и Git workflow
+
+Текущая локальная подготовка: YAML успешно разобран, `docker compose
+config --quiet` и `bash -n` прошли, пять тестов monitor.sh прошли.
+Полные Ansible syntax-check и Terraform validate пока не выполнены:
+эти инструменты отсутствуют в текущей среде, загрузка пакетов недоступна.
+SSH-соединения и локальный Docker daemon также недоступны из текущей
+среды. Реальное развёртывание, идемпотентность и HTTP-ответы ещё не проверены.
+
+Перед сдачей добавить реальные скриншоты и обновить этот раздел:
+
+- Terraform plan/apply и `terraform state list` (либо show).
+- Второй запуск setup_host.yml с `changed=0`.
+- monitor.sh локально и на VM; активный и неактивный/неизвестный сервис.
+- `docker compose ps`, curl :80 с Hello World и curl :8081 с 200 OK.
+- Docker-сети и том Terraform-nginx.
+
+Рабочая ветка: `feature/infra-setup`. После подключения удалённого
+репозитория отправить `main` и рабочую ветку, создать PR/MR, провести
+само-ревью, выполнить слияние. После слияния поставить тег `v0.1.0`.
+PR/MR и тег пока не создавались.
+
+## Источники
+
+- [Docker Engine для Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+- [Ресурс docker_container](https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container)
+- [Установка Terraform](https://developer.hashicorp.com/terraform/install)

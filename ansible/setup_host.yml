@@ -1,0 +1,6 @@
+---
+- name: Prepare Ubuntu for containers
+  hosts: devops
+  become: true
+  roles:
+    - host_setup

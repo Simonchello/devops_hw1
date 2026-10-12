@@ -1,0 +1,25 @@
+---
+- name: Deploy Compose project and monitoring script
+  hosts: devops
+  become: true
+  tasks:
+    - name: Copy Compose project
+      ansible.builtin.copy:
+        src: ../compose/
+        dest: /opt/app/
+        owner: deployer
+        group: deployer
+        mode: preserve
+
+    - name: Install monitoring script
+      ansible.builtin.copy:
+        src: ../scripts/monitor.sh
+        dest: /usr/local/bin/monitor.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Start Compose services
+      community.docker.docker_compose_v2:
+        project_src: /opt/app
+        state: present
