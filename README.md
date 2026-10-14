@@ -202,7 +202,8 @@ curl --fail --show-error -i http://111.88.162.128
   журнал пуст, код 1. В обоих запусках найдено 17 строк с признаками ошибок
   в общем syslog за последний час, что не означает 17 ошибок Docker.
 - Локальные проверки Compose config, YAML и Bash прошли; пять тестов
-  monitor.sh прошли. Реальный локальный запуск мониторинга ещё требуется.
+  monitor.sh прошли. Локальный Docker активен, мониторинг завершился с кодом 0
+  и посчитал 92 строки с признаками ошибок в выгрузке journald.
 
 ### Проблемы доступа при установке Terraform
 
@@ -252,8 +253,34 @@ HTTP-ответ Terraform-nginx:
 
 ![Terraform curl](docs/screenshots/terraform-curl.png)
 
-Осталось добавить скриншоты мониторинга на VM и локально, Compose ps,
-внешнего curl с Hello World и проверки сетей/тома.
+Локально `/var/log/syslog` недоступен даже с sudo: скрипт сообщил об этом
+и вернул код 2. Для успешной проверки использована выгрузка реального
+системного журнала, без изменения конфигурации локального логирования:
+
+```bash
+sudo journalctl --since "1 hour ago" --no-pager -o short-iso > /tmp/devops-hw1-syslog
+sudo env SYSLOG_PATH=/tmp/devops-hw1-syslog ./scripts/monitor.sh docker
+```
+
+Локальная проверка мониторинга (код 0):
+
+![Локальный мониторинг](docs/screenshots/monitor-local.png)
+
+Работающие Compose-сервисы:
+
+![Compose ps](docs/screenshots/compose-ps.png)
+
+Внешний HTTP-запрос к reverse proxy:
+
+![Compose curl Hello World](docs/screenshots/compose-curl.png)
+
+Раздельные сети и том Terraform-nginx:
+
+![Docker networks and volume](docs/screenshots/docker-networks-volume.png)
+
+Осталось добавить скриншот мониторинга на VM. Его фактический результат
+уже приведён выше; локальная проверка использовала выгрузку journald,
+на VM использовался настоящий `/var/log/syslog`.
 
 Рабочая ветка: `feature/infra-setup`. После подключения удалённого
 репозитория отправить `main` и рабочую ветку, создать PR/MR, провести
