@@ -9,14 +9,17 @@
 - [x] Порты и сети Terraform и Compose разделены.
 - [x] Паролей, приватных ключей и Terraform state в коде нет.
 
-Требуют выполнения на доступном хосте:
+Проверки развёртывания (по предоставленным выводам команд):
 
-- [ ] Ansible syntax-check.
-- [ ] Первый и второй запуск setup_host.yml; второй changed=0.
-- [ ] Terraform fmt, init, validate, plan, apply, state list.
-- [ ] nginx :8081 возвращает 200 OK; сеть и том подключены.
-- [ ] Compose :80 возвращает Hello World; оба сервиса работают.
-- [ ] monitor.sh проверен на реальном локальном хосте и VM.
-- [ ] Реальные скриншоты добавлены в README.
-- [ ] Файл .terraform.lock.hcl добавлен в Git после init.
+- [x] Ansible syntax-check.
+- [x] Первый и второй запуск setup_host.yml; второй changed=0.
+- [x] Terraform init, validate, plan, apply, state list.
+- [ ] Подтверждён успешный Terraform fmt -check.
+- [x] nginx :8081 возвращает 200 OK; сеть и том подключены.
+- [x] Compose :80 возвращает Hello World; оба сервиса работают.
+- [x] monitor.sh проверен на VM: активный и отсутствующий сервис.
+- [ ] monitor.sh проверен на реальном локальном хосте.
+- [x] Скриншоты Ansible и Terraform добавлены в README.
+- [ ] Скриншоты Compose и мониторинга добавлены в README.
+- [x] Файл .terraform.lock.hcl добавлен в Git после init.
 - [ ] PR/MR просмотрен и слит; тег v0.1.0 поставлен после слияния.

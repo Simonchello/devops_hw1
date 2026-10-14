@@ -185,20 +185,75 @@ curl --fail --show-error -i http://111.88.162.128
 
 ## 6. Результаты и Git workflow
 
-Текущая локальная подготовка: YAML успешно разобран, `docker compose
-config --quiet` и `bash -n` прошли, пять тестов monitor.sh прошли.
-Полные Ansible syntax-check и Terraform validate пока не выполнены:
-эти инструменты отсутствуют в текущей среде, загрузка пакетов недоступна.
-SSH-соединения и локальный Docker daemon также недоступны из текущей
-среды. Реальное развёртывание, идемпотентность и HTTP-ответы ещё не проверены.
+Проверено на VM 14 октября 2026 года (вывод команд предоставлен автором):
 
-Перед сдачей добавить реальные скриншоты и обновить этот раздел:
+- Ubuntu 24.04.4 LTS, Docker Engine 29.9.0, Compose 5.6.0.
+- Ansible syntax-check успешен; первый запуск: `ok=11 changed=6 failed=0`,
+  второй запуск: `changed=0 unreachable=0 failed=0`.
+- Terraform 1.16.5, Docker-провайдер 3.9.0: validate успешен,
+  plan/apply создали четыре ресурса, state list содержит все четыре.
+- nginx на `http://111.88.162.128:8081` возвращает `200 OK`.
+  Контейнер подключён только к `primak-terraform-net`, том
+  `primak-terraform-nginx-html` смонтирован в `/usr/share/nginx/html` с `RW=false`.
+- Compose playbook: `ok=4 changed=3 unreachable=0 failed=0`.
+  Оба сервиса работают в `primak-compose-net`; внешний запрос
+  `http://111.88.162.128` возвращает `200 OK` и Hello World.
+- monitor.sh на VM: Docker active, код 0; отсутствующий сервис inactive,
+  журнал пуст, код 1. В обоих запусках найдено 17 строк с признаками ошибок
+  в общем syslog за последний час, что не означает 17 ошибок Docker.
+- Локальные проверки Compose config, YAML и Bash прошли; пять тестов
+  monitor.sh прошли. Реальный локальный запуск мониторинга ещё требуется.
 
-- Terraform plan/apply и `terraform state list` (либо show).
-- Второй запуск setup_host.yml с `changed=0`.
-- monitor.sh локально и на VM; активный и неактивный/неизвестный сервис.
-- `docker compose ps`, curl :80 с Hello World и curl :8081 с 200 OK.
-- Docker-сети и том Terraform-nginx.
+### Проблемы доступа при установке Terraform
+
+На VM серверы `apt.releases.hashicorp.com` и `releases.hashicorp.com`
+возвращали HTTP 404. Архив Terraform 1.16.5 и SHA256SUMS были скачаны
+на управляющей машине; перед установкой необходимо проверить SHA256
+по инструкции выше и передать архив по SCP.
+
+Прямой `terraform init` на VM завершился ошибкой `Invalid provider registry host`.
+Для установки Docker-провайдера использовано зеркало Yandex Cloud.
+На VM создан файл `/home/student/terraform-mirror.tfrc`:
+
+```hcl
+provider_installation {
+  network_mirror {
+    url     = "https://terraform-mirror.yandexcloud.net/"
+    include = ["registry.terraform.io/kreuzwerker/docker"]
+  }
+}
+```
+
+Инициализация:
+
+```bash
+sudo env TF_CLI_CONFIG_FILE=/home/student/terraform-mirror.tfrc terraform init
+```
+
+При установке через зеркало Terraform показал `unauthenticated`:
+подпись издателя не была проверена. Lock-файл фиксирует версию и
+контрольную сумму установленного провайдера для `linux_amd64`.
+
+### Скриншоты
+
+Второй запуск Ansible:
+
+![Ansible changed=0](docs/screenshots/ansible-second-run.png)
+
+Создание ресурсов Terraform:
+
+![Terraform apply](docs/screenshots/terraform-apply.png)
+
+Состояние Terraform:
+
+![Terraform state list](docs/screenshots/terraform-state.png)
+
+HTTP-ответ Terraform-nginx:
+
+![Terraform curl](docs/screenshots/terraform-curl.png)
+
+Осталось добавить скриншоты мониторинга на VM и локально, Compose ps,
+внешнего curl с Hello World и проверки сетей/тома.
 
 Рабочая ветка: `feature/infra-setup`. После подключения удалённого
 репозитория отправить `main` и рабочую ветку, создать PR/MR, провести
