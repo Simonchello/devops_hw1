@@ -35,7 +35,7 @@ Terraform-nginx отдаёт стандартную статическую ст�
 - `compose/` — docker-compose.yml, reverse proxy, страница Hello World.
 - `scripts/monitor.sh` — мониторинг сервиса и ошибок syslog.
 - `tests/test_monitor.py` — проверки мониторинга с подставными сервисами.
-- `docs/screenshots/` — сюда добавить реальные скриншоты для сдачи.
+- `docs/screenshots/` — скриншоты результатов проверки.
 
 ## 1. Подготовка управляющей машины
 
@@ -185,13 +185,13 @@ curl --fail --show-error -i http://111.88.162.128
 
 ## 6. Результаты и Git workflow
 
-Проверено на VM 14 октября 2026 года (вывод команд предоставлен автором):
+Проверено на VM 14–15 октября 2026 года:
 
 - Ubuntu 24.04.4 LTS, Docker Engine 29.9.0, Compose 5.6.0.
 - Ansible syntax-check успешен; первый запуск: `ok=11 changed=6 failed=0`,
   второй запуск: `changed=0 unreachable=0 failed=0`.
-- Terraform 1.16.5, Docker-провайдер 3.9.0: validate успешен,
-  plan/apply создали четыре ресурса, state list содержит все четыре.
+- Terraform 1.16.5, Docker-провайдер 3.9.0: `fmt -check` (код 0) и validate
+  успешны, plan/apply создали четыре ресурса, state list содержит все четыре.
 - nginx на `http://111.88.162.128:8081` возвращает `200 OK`.
   Контейнер подключён только к `primak-terraform-net`, том
   `primak-terraform-nginx-html` смонтирован в `/usr/share/nginx/html` с `RW=false`.
@@ -199,8 +199,11 @@ curl --fail --show-error -i http://111.88.162.128
   Оба сервиса работают в `primak-compose-net`; внешний запрос
   `http://111.88.162.128` возвращает `200 OK` и Hello World.
 - monitor.sh на VM: Docker active, код 0; отсутствующий сервис inactive,
-  журнал пуст, код 1. В обоих запусках найдено 17 строк с признаками ошибок
-  в общем syslog за последний час, что не означает 17 ошибок Docker.
+  журнал пуст, код 1. 15 октября проверка повторена со скриптом, который
+  Ansible установил в `/usr/local/bin/monitor.sh`, с тем же результатом.
+  Число строк с признаками ошибок в общем syslog за последний час
+  (17 при первой проверке, 4 при повторной) относится ко всей системе,
+  а не только к Docker.
 - Локальные проверки Compose config, YAML и Bash прошли; пять тестов
   monitor.sh прошли. Локальный Docker активен, мониторинг завершился с кодом 0
   и посчитал 92 строки с признаками ошибок в выгрузке journald.
@@ -208,9 +211,34 @@ curl --fail --show-error -i http://111.88.162.128
 ### Проблемы доступа при установке Terraform
 
 На VM серверы `apt.releases.hashicorp.com` и `releases.hashicorp.com`
-возвращали HTTP 404. Архив Terraform 1.16.5 и SHA256SUMS были скачаны
-на управляющей машине; перед установкой необходимо проверить SHA256
-по инструкции выше и передать архив по SCP.
+возвращали HTTP 404. Поэтому архив Terraform 1.16.5 и файл контрольных
+сумм скачаны на управляющей машине и переданы на VM по SCP, где перед
+установкой проверена SHA256:
+
+```bash
+# Управляющая машина
+curl -fL -o terraform_1.16.5_linux_amd64.zip \
+  https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip
+curl -fL -o SHA256SUMS \
+  https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_SHA256SUMS
+grep ' terraform_1.16.5_linux_amd64.zip$' SHA256SUMS > terraform.sha256
+sha256sum -c terraform.sha256
+ssh student@111.88.162.128 'mkdir -p ~/terraform-install'
+scp terraform_1.16.5_linux_amd64.zip terraform.sha256 \
+  student@111.88.162.128:~/terraform-install/
+
+# VM
+cd ~/terraform-install
+sha256sum -c terraform.sha256
+sudo apt-get install -y unzip
+unzip -o terraform_1.16.5_linux_amd64.zip terraform
+sudo install -m 0755 terraform /usr/local/bin/terraform
+terraform version
+```
+
+Проверка на VM: `terraform_1.16.5_linux_amd64.zip: OK`. Контрольная сумма
+защищает от повреждения архива при передаче; GPG-подпись файла SHA256SUMS
+не проверялась.
 
 Прямой `terraform init` на VM завершился ошибкой `Invalid provider registry host`.
 Для установки Docker-провайдера использовано зеркало Yandex Cloud.
@@ -253,6 +281,11 @@ HTTP-ответ Terraform-nginx:
 
 ![Terraform curl](docs/screenshots/terraform-curl.png)
 
+`terraform fmt -check` и мониторинг на VM с настоящим `/var/log/syslog`
+(коды возврата 0, 0 и 1):
+
+![Мониторинг на VM](docs/screenshots/monitor-vm.png)
+
 Локально `/var/log/syslog` недоступен даже с sudo: скрипт сообщил об этом
 и вернул код 2. Для успешной проверки использована выгрузка реального
 системного журнала, без изменения конфигурации локального логирования:
@@ -266,11 +299,11 @@ sudo env SYSLOG_PATH=/tmp/devops-hw1-syslog ./scripts/monitor.sh docker
 
 ![Локальный мониторинг](docs/screenshots/monitor-local.png)
 
-Работающие Compose-сервисы:
+Работающие Compose-сервисы и запрос к reverse proxy изнутри VM:
 
 ![Compose ps](docs/screenshots/compose-ps.png)
 
-Внешний HTTP-запрос к reverse proxy:
+Внешний HTTP-запрос к reverse proxy с управляющей машины:
 
 ![Compose curl Hello World](docs/screenshots/compose-curl.png)
 
@@ -278,17 +311,19 @@ sudo env SYSLOG_PATH=/tmp/devops-hw1-syslog ./scripts/monitor.sh docker
 
 ![Docker networks and volume](docs/screenshots/docker-networks-volume.png)
 
-Осталось добавить скриншот мониторинга на VM. Его фактический результат
-уже приведён выше; локальная проверка использовала выгрузку journald,
-на VM использовался настоящий `/var/log/syslog`.
+### Git workflow
 
-Рабочая ветка: `feature/infra-setup`. После подключения удалённого
-репозитория отправить `main` и рабочую ветку, создать PR/MR, провести
-само-ревью, выполнить слияние. После слияния поставить тег `v0.1.0`.
-PR/MR и тег пока не создавались.
+- `main` — стабильная ветка: после начального коммита со структурой
+  проекта изменения попадают в неё только через Pull Request.
+- `feature/infra-setup` — вся работа по заданию.
+- Pull Request (аналог Merge Request в GitLab) из `feature/infra-setup`
+  в `main` с само-ревью по чек-листу [docs/self-review.md](docs/self-review.md).
+- Слияние через merge commit, чтобы история ветки сохранилась.
+- После слияния на `main` ставится тег `v0.1.0`.
 
 ## Источники
 
 - [Docker Engine для Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 - [Ресурс docker_container](https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container)
 - [Установка Terraform](https://developer.hashicorp.com/terraform/install)
+- [Зеркало провайдеров Terraform (Yandex Cloud)](https://yandex.cloud/en/docs/terraform/quickstart)
