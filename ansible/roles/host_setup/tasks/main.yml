@@ -1,0 +1,86 @@
+---
+- name: Require Ubuntu
+  ansible.builtin.assert:
+    that: ansible_distribution == 'Ubuntu'
+    fail_msg: This role supports Ubuntu only.
+
+- name: Install repository prerequisites and syslog
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - sudo
+      - rsyslog
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Download Docker signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+
+- name: Configure official Docker repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    mode: '0644'
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_architecture, ansible_architecture) }}
+      Signed-By: /etc/apt/keyrings/docker.asc
+  register: docker_repository
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: '{{ docker_repository.changed }}'
+
+- name: Create deployer account
+  ansible.builtin.user:
+    name: deployer
+    shell: /bin/bash
+    create_home: true
+    groups: docker
+    append: true
+
+- name: Configure deployer passwordless sudo
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/deployer
+    content: "deployer ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Enable Docker and syslog services
+  ansible.builtin.systemd_service:
+    name: '{{ item }}'
+    state: started
+    enabled: true
+  loop:
+    - docker
+    - rsyslog
+
+- name: Prepare application directory
+  ansible.builtin.file:
+    path: /opt/app
+    state: directory
+    owner: deployer
+    group: deployer
+    mode: '0755'
